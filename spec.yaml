@@ -1,0 +1,1763 @@
+id: ops_dashboard
+
+requirements:
+  - name: ecoscope-platform
+    version: "2.15.1"
+    channel: https://repo.prefix.dev/ecoscope-workflows/
+  # re-stated as workaround: https://github.com/wildlife-dynamics/wt/issues/167#issuecomment-4451993697
+  - name: pydeck
+    version: "0.9.2"
+    channel: conda-forge
+
+task-instance-defaults:
+  skipif:
+    conditions:
+      - any_is_empty_df
+      - any_dependency_skipped
+
+rjsf-overrides:
+  properties:
+    # Events — ev_get_events is at global level
+    ev_get_events.properties.event_types.ecoscope:transform:
+      - transformer: EarthRangerEnumResolver
+        transformer_kws:
+          type: event_type
+          depends_on: properties.er_client_name.properties.data_source.properties.name
+
+    # Event Details — dynamic dropdowns driven by selected event type
+    Event Details.properties.ed_params.properties.event_type.ecoscope:transform:
+      - transformer: EarthRangerEnumResolver
+        transformer_kws:
+          type: event_type_schema_properties
+          depends_on: properties.er_client_name.properties.data_source.properties.name
+    Event Details.properties.ed_params.properties.analysis_field.ecoscope:transform:
+      - transformer: EarthRangerEnumResolver
+        transformer_kws:
+          type: event_type_schema_numeric_prop
+          depends_on: properties.Event Details.properties.ed_params.properties.event_type
+    Event Details.properties.ed_params.properties.category_field.ecoscope:transform:
+      - transformer: EarthRangerEnumResolver
+        transformer_kws:
+          type: event_type_schema_choice_prop
+          depends_on: properties.Event Details.properties.ed_params.properties.event_type
+
+    # Patrols — populate patrol type and event type dropdowns from ER
+    Patrols.properties.ptrl_params.properties.patrol_types.ecoscope:transform:
+      - transformer: EarthRangerEnumResolver
+        transformer_kws:
+          type: patrol_type
+          depends_on: properties.er_client_name.properties.data_source.properties.name
+
+    # Trajectory colour column — lives in its own Trajectory Category task-group
+    Trajectory Category.properties.ptrl_set_color_column.properties.var.oneOf:
+      - const: patrol_type
+        title: Patrol Type
+      - const: patrol_status
+        title: Patrol Status
+      - const: patrol_subject
+        title: Patrol Subject
+      - const: patrol_serial_number
+        title: Serial Number
+    Trajectory Category.properties.ptrl_set_color_column.properties.var.title: Category
+    Trajectory Category.properties.ptrl_set_color_column.properties.var.default: patrol_type
+
+    # Time Density opacity default — ptrl_set_ltd_args lives in Time Density Map task-group
+    Time Density Map.properties.ptrl_set_ltd_args.properties.opacity.default: 0.700000
+
+    # Time Interval — global shared setting for all bar charts
+    time_interval.properties.var.oneOf:
+      - const: year
+        title: Year
+      - const: month
+        title: Month
+      - const: week
+        title: Week
+      - const: day
+        title: Day
+      - const: hour
+        title: Hour
+    time_interval.properties.var.title: Time Interval
+    time_interval.properties.var.default: month
+
+  uiSchema:
+    # Hide redundant labels on array items
+    ev_filter.filter_point_coords.items.ui:options.label: false
+    base_map_defs.base_maps.items.ui:options.label: false
+
+    # Event Count Map — meshgrid cell size widget
+    Event Count Map.ev_meshgrid.auto_scale_or_custom_cell_size:
+      anyOf:
+        - ui:help: Auto-scale for an optimized grid cell size based on the workflow data, or Customize to set a specific grid cell size.
+          ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+        - ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+      auto_scale_or_custom:
+        ui:widget: hidden
+
+    # Event Details — sum density meshgrid cell size widget
+    Analysis Field Sum Map.ed_sum_meshgrid.auto_scale_or_custom_cell_size:
+      anyOf:
+        - ui:help: Auto-scale for an optimized grid cell size based on the workflow data, or Customize to set a specific grid cell size.
+          ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+        - ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+      auto_scale_or_custom:
+        ui:widget: hidden
+
+    # Time Density — meshgrid cell size widget (ptrl_set_ltd_args is inside Time Density Map)
+    Time Density Map.ptrl_set_ltd_args.auto_scale_or_custom_cell_size:
+      anyOf:
+        - ui:help: Auto-scale for an optimized grid cell size based on the workflow data, or Customize to set a specific grid cell size.
+          ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+        - ui:options:
+            label: false
+          auto_scale_or_custom:
+            ui:widget: hidden
+      auto_scale_or_custom:
+        ui:widget: hidden
+
+workflow:
+
+  # ── Global ───────────────────────────────────────────────────────────────────
+
+  - name: Workflow Details
+    id: workflow_details
+    task: set_workflow_details
+
+  - name: Data Source
+    id: er_client_name
+    task: set_er_connection
+
+  - name: Time Range
+    id: time_range
+    task: set_time_range
+    partial:
+      time_format: '%d %b %Y %H:%M:%S'
+
+  - id: get_timezone
+    task: get_timezone_from_time_range
+    partial:
+      time_range: ${{ workflow.time_range.return }}
+
+  - name: Map Base Layers
+    id: base_map_defs
+    task: set_base_maps
+
+  - id: ev_get_events
+    task: get_events
+    partial:
+      client: ${{ workflow.er_client_name.return }}
+      time_range: ${{ workflow.time_range.return }}
+      event_columns:
+        - id
+        - time
+        - event_type
+        - event_category
+        - reported_by
+        - serial_number
+        - geometry
+      raise_on_empty: false
+      include_details: false
+      include_updates: false
+      include_related_events: false
+      include_display_values: true
+      include_null_geometry: false
+
+  - name: Convert to timezone
+    id: ev_convert_tz
+    task: convert_values_to_timezone
+    partial:
+      df: ${{ workflow.ev_get_events.return }}
+      timezone: ${{ workflow.get_timezone.return }}
+      columns:
+        - time
+
+  - name: Extract reported_by_name from Events
+    id: ev_extract_reported_by
+    task: extract_value_from_json_column
+    partial:
+      df: ${{ workflow.ev_convert_tz.return }}
+      column_name: reported_by
+      field_name_options:
+        - name
+      output_type: str
+      output_column_name: reported_by_name
+
+  - name: Event Location Filter
+    id: ev_filter
+    task: apply_reloc_coord_filter
+    partial:
+      df: ${{ workflow.ev_extract_reported_by.return }}
+      roi_gdf: null
+      roi_name: null
+      reset_index: true
+
+  - name: Events Bar Chart
+    id: time_interval
+    task: set_string_var
+
+  # ── Events ───────────────────────────────────────────────────────────────────
+
+  - title: Events
+    type: task-group
+    description: >-
+      Select one or more event types to visualize on the map, bar chart, and pie chart.
+      Leave event_types empty to include all events.
+    tasks:
+      - id: ev_colormap
+        task: apply_color_map
+        partial:
+          df: ${{ workflow.ev_filter.return }}
+          input_column_name: event_type
+          colormap: tab20b
+          output_column_name: event_type_colormap
+
+      - id: ev_set_map_title
+        task: set_string_var
+        partial:
+          var: Events Map
+
+      - id: ev_set_bar_chart_title
+        task: set_string_var
+        partial:
+          var: Events Bar Chart
+
+      - id: ev_set_pie_chart_title
+        task: set_string_var
+        partial:
+          var: Events Pie Chart
+
+      - id: ev_rename_cols
+        task: map_columns
+        partial:
+          df: ${{ workflow.ev_colormap.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            serial_number: Event Serial
+            time: Event Time
+            event_type_display: Event Type
+            reported_by_name: Reported By
+          raise_if_not_found: true
+
+      - name: Create map layer from Events
+        id: ev_map_layer
+        task: create_point_layer
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          geodataframe: ${{ workflow.ev_rename_cols.return }}
+          layer_style:
+            fill_color_column: event_type_colormap
+            get_radius: 5
+          legend:
+            label_column: Event Type
+            color_column: event_type_colormap
+          tooltip_columns:
+            - Event Serial
+            - Event Time
+            - Event Type
+            - Reported By
+
+      - name: Draw Events Ecomap
+        id: ev_map
+        task: draw_ecomap
+        partial:
+          geo_layers: ${{ workflow.ev_map_layer.return }}
+          tile_layers: ${{ workflow.base_map_defs.return }}
+          north_arrow_style:
+            placement: top-left
+          legend_style:
+            title: Event Type
+            format_title: false
+            placement: bottom-right
+          static: false
+          title: null
+          max_zoom: 20
+          widget_id: ${{ workflow.ev_set_map_title.return }}
+
+      - id: ev_map_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ev_map.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ev_map
+
+      - name: Events Map Widget
+        id: ev_map_widget
+        task: create_map_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ev_set_map_title.return }}
+          data: ${{ workflow.ev_map_url.return }}
+
+      - id: ev_bar_chart
+        task: draw_time_series_bar_chart
+        partial:
+          dataframe: ${{ workflow.ev_colormap.return }}
+          x_axis: time
+          y_axis: event_type_display
+          category: event_type_display
+          agg_function: count
+          color_column: event_type_colormap
+          time_interval: ${{ workflow.time_interval.return }}
+          plot_style:
+            xperiodalignment: middle
+          layout_style: null
+          widget_id: ${{ workflow.ev_set_bar_chart_title.return }}
+
+      - id: ev_bar_chart_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ev_bar_chart.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ev_bar_chart
+
+      - name: Events Bar Chart Widget
+        id: ev_bar_chart_widget
+        task: create_plot_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ev_set_bar_chart_title.return }}
+          data: ${{ workflow.ev_bar_chart_url.return }}
+
+      - id: ev_pie_chart
+        task: draw_pie_chart
+        partial:
+          dataframe: ${{ workflow.ev_colormap.return }}
+          value_column: event_type_display
+          color_column: event_type_colormap
+          plot_style:
+            textinfo: value
+          label_column: null
+          layout_style: null
+          widget_id: ${{ workflow.ev_set_pie_chart_title.return }}
+
+      - id: ev_pie_chart_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ev_pie_chart.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ev_pie_chart
+
+      - name: Events Pie Chart Widget
+        id: ev_pie_chart_widget
+        task: create_plot_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ev_set_pie_chart_title.return }}
+          data: ${{ workflow.ev_pie_chart_url.return }}
+
+      - id: ev_count
+        task: dataframe_count
+        partial:
+          df: ${{ workflow.ev_filter.return }}
+
+      - name: Total Events Widget
+        id: ev_count_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Total Events
+          decimal_places: 0
+          data: ${{ workflow.ev_count.return }}
+
+  # ── Event Count Map ──────────────────────────────────────────────────────────
+
+  - title: Event Count Map
+    type: task-group
+    description: >-
+      Grid-based heatmap showing where events are concentrated. The grid is
+      divided into equal-interval density bins coloured from green (low) to red (high).
+    tasks:
+      - id: ev_set_fd_map_title
+        task: set_string_var
+        partial:
+          var: Event Count Map
+
+      - id: ev_meshgrid
+        task: create_meshgrid
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          aoi: ${{ workflow.ev_filter.return }}
+          intersecting_only: false
+
+      - id: ev_fd_count_map
+        task: calculate_feature_density
+        partial:
+          geodataframe: ${{ workflow.ev_filter.return }}
+          meshgrid: ${{ workflow.ev_meshgrid.return }}
+          geometry_type: point
+          sum_column: null
+
+      - id: ev_fd_sorted
+        task: sort_values
+        partial:
+          df: ${{ workflow.ev_fd_count_map.return }}
+          column_name: density
+          ascending: true
+          na_position: last
+
+      - id: ev_fd_drop_nan
+        task: drop_nan_values_by_column
+        partial:
+          df: ${{ workflow.ev_fd_sorted.return }}
+          column_name: density
+
+      - id: ev_fd_classify
+        task: apply_classification
+        partial:
+          df: ${{ workflow.ev_fd_drop_nan.return }}
+          input_column_name: density
+          output_column_name: density_bins
+          classification_options:
+            scheme: equal_interval
+            k: 10
+          label_options:
+            label_ranges: true
+            label_decimals: 0
+
+      - id: ev_fd_colormap
+        task: apply_color_map
+        partial:
+          df: ${{ workflow.ev_fd_classify.return }}
+          input_column_name: density_bins
+          colormap: RdYlGn_r
+          output_column_name: density_colormap
+
+      - id: ev_fd_rename
+        task: map_columns
+        partial:
+          df: ${{ workflow.ev_fd_colormap.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            density: Count
+          raise_if_not_found: true
+
+      - name: Create Event Count map layer
+        id: ev_fd_layer
+        task: create_polygon_layer
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          geodataframe: ${{ workflow.ev_fd_rename.return }}
+          layer_style:
+            fill_color_column: density_colormap
+            get_line_width: 0
+            opacity: 0.400000
+          legend:
+            label_column: density_bins
+            color_column: density_colormap
+          tooltip_columns:
+            - Count
+
+      - name: Draw Event Count Ecomap
+        id: ev_count_heatmap
+        task: draw_ecomap
+        partial:
+          geo_layers: ${{ workflow.ev_fd_layer.return }}
+          tile_layers: ${{ workflow.base_map_defs.return }}
+          north_arrow_style:
+            placement: top-left
+          legend_style:
+            title: Number Of Events
+            format_title: false
+            placement: bottom-right
+          static: false
+          title: null
+          max_zoom: 20
+          widget_id: ${{ workflow.ev_set_fd_map_title.return }}
+
+      - id: ev_count_heatmap_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ev_count_heatmap.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ev_count_heatmap
+
+      - name: Event Count Map Widget
+        id: ev_count_heatmap_widget
+        task: create_map_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ev_set_fd_map_title.return }}
+          data: ${{ workflow.ev_count_heatmap_url.return }}
+
+  # ── Event Details ─────────────────────────────────────────────────────────────
+
+  - title: Event Details
+    type: task-group
+    description: >-
+      Deep-dive into a single event type with a numeric analysis field (e.g. fines
+      collected, animals seized). Configure event_type, analysis_field, and
+      optionally a category_field. Leave event_type blank to skip this section.
+    tasks:
+      - name: Event Details Parameters
+        id: ed_params
+        task: set_event_details_params
+        partial:
+          client: ${{ workflow.er_client_name.return }}
+          time_range: ${{ workflow.time_range.return }}
+          event_columns:
+            - id
+            - time
+            - event_type
+            - event_category
+            - reported_by
+            - serial_number
+            - location
+            - event_details
+            - geometry
+          raise_on_empty: false
+          include_details: true
+          include_updates: false
+          include_related_events: false
+          include_display_values: false
+          include_null_geometry: false
+
+  - id: ed_analysis_field
+    task: get_analysis_field_from_event_details
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_analysis_field_label
+    task: get_analysis_field_label_from_event_details
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_analysis_field_unit
+    task: get_analysis_field_unit_from_event_details
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_category_field
+    task: get_category_field_from_event_details
+    skipif:
+      conditions:
+        - any_dependency_is_none
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_category_field_label
+    task: get_category_field_label_from_event_details
+    skipif:
+      conditions:
+        - any_dependency_is_none
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_event_type
+    task: get_event_type_from_event_details
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - id: ed_get_events
+    task: get_events_from_combined_params
+    partial:
+      combined_params: ${{ workflow.ed_params.return }}
+
+  - name: Convert to timezone
+    id: ed_convert_tz
+    task: convert_values_to_timezone
+    partial:
+      df: ${{ workflow.ed_get_events.return }}
+      timezone: ${{ workflow.get_timezone.return }}
+      columns:
+        - time
+
+  - name: Extract Latitude from Events
+    id: ed_extract_lat
+    task: extract_value_from_json_column
+    partial:
+      df: ${{ workflow.ed_convert_tz.return }}
+      column_name: location
+      field_name_options:
+        - latitude
+      output_type: str
+      output_column_name: latitude
+
+  - name: Extract Longitude from Events
+    id: ed_extract_lon
+    task: extract_value_from_json_column
+    partial:
+      df: ${{ workflow.ed_extract_lat.return }}
+      column_name: location
+      field_name_options:
+        - longitude
+      output_type: str
+      output_column_name: longitude
+
+  - name: Extract reported_by_name from Event Details
+    id: ed_extract_reported_by
+    task: extract_value_from_json_column
+    partial:
+      df: ${{ workflow.ed_extract_lon.return }}
+      column_name: reported_by
+      field_name_options:
+        - name
+      output_type: str
+      output_column_name: reported_by_name
+
+  - name: Event Details Location Filter
+    id: ed_filter
+    task: apply_reloc_coord_filter
+    partial:
+      df: ${{ workflow.ed_extract_reported_by.return }}
+      roi_gdf: null
+      roi_name: null
+      reset_index: true
+
+  - name: Normalize event details
+    id: ed_normalize
+    task: normalize_json_column
+    partial:
+      df: ${{ workflow.ed_filter.return }}
+      column: event_details
+      skip_if_not_exists: false
+      sort_columns: false
+
+  - id: ed_strip_prefix
+    task: strip_prefix_from_column_names
+    partial:
+      df: ${{ workflow.ed_normalize.return }}
+      prefix: event_details__
+
+  - id: ed_add_default_category
+    task: assign_value
+    partial:
+      df: ${{ workflow.ed_strip_prefix.return }}
+      column_name: default_category
+      value: ${{ workflow.ed_analysis_field_unit.return }}
+      noop_if_column_exists: false
+
+  - id: ed_default_category_field
+    task: default_if_string_is_empty
+    partial:
+      value: ${{ workflow.ed_category_field.return }}
+      default: default_category
+
+  - id: ed_category_label_or_field
+    task: default_if_string_is_empty
+    partial:
+      value: ${{ workflow.ed_category_field_label.return }}
+      default: ${{ workflow.ed_category_field.return }}
+
+  - id: ed_default_category_label
+    task: default_if_string_is_empty
+    partial:
+      value: ${{ workflow.ed_category_label_or_field.return }}
+      default: ${{ workflow.ed_category_field.return }}
+
+  - id: ed_ensure_analysis
+    task: assign_value
+    partial:
+      df: ${{ workflow.ed_add_default_category.return }}
+      column_name: ${{ workflow.ed_analysis_field.return }}
+      value: null
+      noop_if_column_exists: true
+
+  - id: ed_ensure_category
+    task: assign_value
+    partial:
+      df: ${{ workflow.ed_ensure_analysis.return }}
+      column_name: ${{ workflow.ed_default_category_field.return }}
+      value: None
+      noop_if_column_exists: true
+
+  - id: ed_ensure_numeric
+    task: convert_column_values_to_numeric
+    partial:
+      df: ${{ workflow.ed_ensure_category.return }}
+      columns:
+        - ${{ workflow.ed_analysis_field.return }}
+
+  - id: ed_colormap
+    task: apply_color_map
+    partial:
+      df: ${{ workflow.ed_ensure_numeric.return }}
+      input_column_name: ${{ workflow.ed_default_category_field.return }}
+      colormap:
+        - '#312B86'
+        - '#08D1CC'
+        - '#FF3FB3'
+        - '#20BF55'
+        - '#FF9F1C'
+        - '#6460B0'
+        - '#FF7FCC'
+        - '#4DE3DD'
+        - '#6BE39A'
+        - '#FFC46F'
+        - '#1E215C'
+        - '#C80088'
+        - '#008784'
+        - '#08853A'
+        - '#C46C00'
+      output_column_name: ed_colormap
+
+  - id: ed_set_count_title
+    task: concat_string_vars
+    skipif:
+      conditions:
+        - never
+    partial:
+      values:
+        - ${{ workflow.ed_analysis_field_label.return }}
+        - ' Events'
+
+  - id: ed_set_summary_title
+    task: set_string_var
+    partial:
+      var: Summary Statistics
+
+  - id: ed_set_table_title
+    task: set_string_var
+    partial:
+      var: Events Table
+
+  - id: ed_map_title_pt1
+    task: concat_string_vars
+    skipif:
+      conditions:
+        - never
+    partial:
+      values:
+        - ${{ workflow.ed_analysis_field_label.return }}
+        - ' Locations'
+
+  - id: ed_set_map_title
+    task: default_if_string_is_empty
+    skipif:
+      conditions:
+        - never
+    partial:
+      value: ${{ workflow.ed_map_title_pt1.return }}
+      default: Event Details Map
+
+  - id: ed_bar_chart_title_pt1
+    task: concat_string_vars
+    skipif:
+      conditions:
+        - never
+    partial:
+      values:
+        - ${{ workflow.ed_analysis_field_label.return }}
+        - ' Over Time'
+
+  - id: ed_set_bar_chart_title
+    task: default_if_string_is_empty
+    skipif:
+      conditions:
+        - never
+    partial:
+      value: ${{ workflow.ed_bar_chart_title_pt1.return }}
+      default: Event Details Bar Chart
+
+  - id: ed_pie_title_pt1
+    task: concat_string_vars
+    skipif:
+      conditions:
+        - never
+    partial:
+      values:
+        - 'Proportion of '
+        - ${{ workflow.ed_analysis_field_label.return }}
+
+  - id: ed_set_pie_chart_title
+    task: default_if_string_is_empty
+    skipif:
+      conditions:
+        - never
+    partial:
+      value: ${{ workflow.ed_pie_title_pt1.return }}
+      default: Event Details Pie Chart
+
+  - id: ed_sum_map_title_pt1
+    task: concat_string_vars
+    skipif:
+      conditions:
+        - never
+    partial:
+      values:
+        - ${{ workflow.ed_analysis_field_label.return }}
+        - ' Sum Map'
+
+  - id: ed_set_sum_map_title
+    task: default_if_string_is_empty
+    skipif:
+      conditions:
+        - never
+    partial:
+      value: ${{ workflow.ed_sum_map_title_pt1.return }}
+      default: Analysis Field Sum Map
+
+  - id: ed_count
+    task: dataframe_count
+    partial:
+      df: ${{ workflow.ed_ensure_numeric.return }}
+
+  - name: Total Events Widget
+    id: ed_count_widget
+    task: create_single_value_widget_single_view
+    skipif:
+      conditions:
+        - never
+    partial:
+      title: ${{ workflow.ed_set_count_title.return }}
+      decimal_places: 0
+      data: ${{ workflow.ed_count.return }}
+
+  - id: ed_drop_nan_analysis
+    task: drop_nan_values_by_column
+    partial:
+      df: ${{ workflow.ed_colormap.return }}
+      column_name: ${{ workflow.ed_analysis_field.return }}
+
+  - id: ed_summary_stats
+    task: summarize_df
+    partial:
+      df: ${{ workflow.ed_drop_nan_analysis.return }}
+      groupby_cols: null
+      reset_index: false
+      summary_params:
+        - display_name: Sum
+          aggregator: sum
+          column: ${{ workflow.ed_analysis_field.return }}
+        - display_name: Min
+          aggregator: min
+          column: ${{ workflow.ed_analysis_field.return }}
+        - display_name: Max
+          aggregator: max
+          column: ${{ workflow.ed_analysis_field.return }}
+        - display_name: Median
+          aggregator: median
+          column: ${{ workflow.ed_analysis_field.return }}
+        - display_name: Mean
+          aggregator: mean
+          column: ${{ workflow.ed_analysis_field.return }}
+
+  - id: ed_transpose
+    task: transpose
+    partial:
+      df: ${{ workflow.ed_summary_stats.return }}
+      transposed_column_name: Summary Stats
+
+  - id: ed_rename_summary
+    task: map_columns
+    partial:
+      df: ${{ workflow.ed_transpose.return }}
+      drop_columns: []
+      retain_columns: []
+      rename_columns:
+        "0": Summary Values
+      raise_if_not_found: true
+
+  - id: ed_stats_table
+    task: draw_table
+    partial:
+      dataframe: ${{ workflow.ed_rename_summary.return }}
+      columns:
+        - Summary Stats
+        - Summary Values
+      table_config:
+        enable_sorting: true
+        enable_filtering: false
+        enable_download: true
+        hide_header: true
+      widget_id: ${{ workflow.ed_set_summary_title.return }}
+
+  - id: ed_stats_table_url
+    task: persist_text
+    partial:
+      text: ${{ workflow.ed_stats_table.return }}
+      root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+      filename_suffix: ed_stats_table
+
+  - name: Summary Statistics Widget
+    id: ed_stats_table_widget
+    task: create_table_widget_single_view
+    skipif:
+      conditions:
+        - never
+    partial:
+      title: ${{ workflow.ed_set_summary_title.return }}
+      data: ${{ workflow.ed_stats_table_url.return }}
+
+  - id: ed_pie_chart
+    task: draw_pie_chart
+    partial:
+      dataframe: ${{ workflow.ed_drop_nan_analysis.return }}
+      value_column: ${{ workflow.ed_analysis_field.return }}
+      color_column: ed_colormap
+      plot_style:
+        textinfo: value
+      label_column: ${{ workflow.ed_default_category_field.return }}
+      layout_style: null
+      widget_id: ${{ workflow.ed_set_pie_chart_title.return }}
+
+  - id: ed_pie_chart_url
+    task: persist_text
+    partial:
+      text: ${{ workflow.ed_pie_chart.return }}
+      root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+      filename_suffix: ed_pie_chart
+
+  - name: Event Details Pie Chart Widget
+    id: ed_pie_chart_widget
+    task: create_plot_widget_single_view
+    skipif:
+      conditions:
+        - never
+    partial:
+      title: ${{ workflow.ed_set_pie_chart_title.return }}
+      data: ${{ workflow.ed_pie_chart_url.return }}
+
+  - id: ed_normalize_analysis
+    task: normalize_numeric_column
+    partial:
+      df: ${{ workflow.ed_drop_nan_analysis.return }}
+      column: ${{ workflow.ed_analysis_field.return }}
+      output_column_name: normalized_analysis_field
+
+  - id: ed_drop_empty_geometry
+    task: drop_null_geometry
+    partial:
+      gdf: ${{ workflow.ed_normalize_analysis.return }}
+
+  - id: ed_rename_cols
+    task: map_columns
+    partial:
+      df: ${{ workflow.ed_drop_empty_geometry.return }}
+      drop_columns:
+        - reported_by
+        - location
+        - updates
+      retain_columns: []
+      rename_columns:
+        serial_number: Serial Number
+        time: Event Time
+        reported_by_name: Reported By
+        latitude: Latitude
+        longitude: Longitude
+      raise_if_not_found: false
+
+  - name: Create Event Details map layer
+    id: ed_map_layer
+    task: create_point_layer
+    skipif:
+      conditions:
+        - any_is_empty_df
+        - any_dependency_skipped
+        - all_geometry_are_none
+    partial:
+      geodataframe: ${{ workflow.ed_rename_cols.return }}
+      layer_style:
+        fill_color_column: ed_colormap
+        get_radius: normalized_analysis_field
+        stroked: true
+        get_line_color: '#FFFFFF'
+        radius_scale: 5
+      legend:
+        label_column: ${{ workflow.ed_default_category_field.return }}
+        color_column: ed_colormap
+      tooltip_columns:
+        - Serial Number
+        - Event Time
+        - Reported By
+
+  - name: Draw Event Details Ecomap
+    id: ed_map
+    task: draw_ecomap
+    partial:
+      geo_layers: ${{ workflow.ed_map_layer.return }}
+      tile_layers: ${{ workflow.base_map_defs.return }}
+      north_arrow_style:
+        placement: top-left
+      legend_style:
+        title: ${{ workflow.ed_default_category_label.return }}
+        format_title: false
+        placement: bottom-right
+      static: false
+      title: null
+      max_zoom: 20
+      widget_id: ${{ workflow.ed_set_map_title.return }}
+
+  - id: ed_map_url
+    task: persist_text
+    partial:
+      text: ${{ workflow.ed_map.return }}
+      root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+      filename_suffix: ed_map
+
+  - name: Event Details Map Widget
+    id: ed_map_widget
+    task: create_map_widget_single_view
+    skipif:
+      conditions:
+        - never
+    partial:
+      title: ${{ workflow.ed_set_map_title.return }}
+      data: ${{ workflow.ed_map_url.return }}
+
+  # ── Events Bar Chart ──────────────────────────────────────────────────────────
+
+  - title: Events Bar Chart
+    type: task-group
+    description: The bar chart shows how the analysis field value varied over time. Choose the time interval for the x-axis to control how values are summarized.
+    tasks:
+      - id: ed_bar_chart
+        task: draw_time_series_bar_chart
+        partial:
+          dataframe: ${{ workflow.ed_drop_nan_analysis.return }}
+          x_axis: time
+          y_axis: ${{ workflow.ed_analysis_field.return }}
+          category: ${{ workflow.ed_default_category_field.return }}
+          agg_function: sum
+          color_column: ed_colormap
+          plot_style:
+            xperiodalignment: middle
+          layout_style: null
+          widget_id: ${{ workflow.ed_set_bar_chart_title.return }}
+
+      - id: ed_bar_chart_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ed_bar_chart.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ed_bar_chart
+
+      - name: Event Details Bar Chart Widget
+        id: ed_bar_chart_widget
+        task: create_plot_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ed_set_bar_chart_title.return }}
+          data: ${{ workflow.ed_bar_chart_url.return }}
+
+  # ── Analysis Field Sum Map ────────────────────────────────────────────────────
+
+  - title: Analysis Field Sum Map
+    type: task-group
+    description: These settings generate a grid-based heatmap showing where events are concentrated.
+    tasks:
+      - id: ed_sum_meshgrid
+        task: create_meshgrid
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          aoi: ${{ workflow.ed_filter.return }}
+          intersecting_only: false
+
+      - id: ed_sum_map_density
+        task: calculate_feature_density
+        partial:
+          geodataframe: ${{ workflow.ed_drop_nan_analysis.return }}
+          meshgrid: ${{ workflow.ed_sum_meshgrid.return }}
+          geometry_type: point
+          sum_column: ${{ workflow.ed_analysis_field.return }}
+
+      - id: ed_sum_drop_nan
+        task: drop_nan_values_by_column
+        partial:
+          df: ${{ workflow.ed_sum_map_density.return }}
+          column_name: density
+
+      - id: ed_sum_sorted
+        task: sort_values
+        partial:
+          df: ${{ workflow.ed_sum_drop_nan.return }}
+          column_name: density
+          ascending: true
+          na_position: last
+
+      - id: ed_sum_classify
+        task: apply_classification
+        partial:
+          df: ${{ workflow.ed_sum_sorted.return }}
+          input_column_name: density
+          output_column_name: density_bins
+          classification_options:
+            scheme: equal_interval
+            k: 9
+          label_options:
+            label_ranges: true
+            label_decimals: 0
+
+      - id: ed_sum_colormap
+        task: apply_color_map
+        partial:
+          df: ${{ workflow.ed_sum_classify.return }}
+          input_column_name: density_bins
+          colormap:
+            - '#5C4FE7'
+            - '#269CD5'
+            - '#00D0C8'
+            - '#81D670'
+            - '#FFD000'
+            - '#F9BB12'
+            - '#FF9600'
+            - '#FA7306'
+            - '#F23B0E'
+          output_column_name: density_colormap
+
+      - id: ed_sum_rename
+        task: map_columns
+        partial:
+          df: ${{ workflow.ed_sum_colormap.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            density: Sum
+          raise_if_not_found: true
+
+      - name: Create Analysis Field Sum map layer
+        id: ed_sum_layer
+        task: create_polygon_layer
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          geodataframe: ${{ workflow.ed_sum_rename.return }}
+          layer_style:
+            fill_color_column: density_colormap
+            get_line_width: 0
+            opacity: 0.400000
+          legend:
+            label_column: density_bins
+            color_column: density_colormap
+          tooltip_columns:
+            - Sum
+
+      - name: Draw Analysis Field Sum Ecomap
+        id: ed_sum_map
+        task: draw_ecomap
+        partial:
+          geo_layers: ${{ workflow.ed_sum_layer.return }}
+          tile_layers: ${{ workflow.base_map_defs.return }}
+          north_arrow_style:
+            placement: top-left
+          legend_style:
+            title: ${{ workflow.ed_analysis_field_unit.return }}
+            format_title: false
+            placement: bottom-right
+          static: false
+          title: null
+          max_zoom: 20
+          widget_id: ${{ workflow.ed_set_sum_map_title.return }}
+
+      - id: ed_sum_map_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ed_sum_map.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ed_sum_map
+
+      - name: Analysis Field Sum Map Widget
+        id: ed_sum_map_widget
+        task: create_map_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ed_set_sum_map_title.return }}
+          data: ${{ workflow.ed_sum_map_url.return }}
+
+  - id: ed_events_table
+    task: draw_table
+    partial:
+      dataframe: ${{ workflow.ed_rename_cols.return }}
+      table_config:
+        enable_sorting: true
+        enable_filtering: false
+        enable_download: true
+        hide_header: false
+      widget_id: ${{ workflow.ed_set_table_title.return }}
+
+  - id: ed_events_table_url
+    task: persist_text
+    partial:
+      text: ${{ workflow.ed_events_table.return }}
+      root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+      filename_suffix: ed_events_table
+
+  - name: Events Table Widget
+    id: ed_events_table_widget
+    task: create_table_widget_single_view
+    skipif:
+      conditions:
+        - never
+    partial:
+      title: ${{ workflow.ed_set_table_title.return }}
+      data: ${{ workflow.ed_events_table_url.return }}
+
+  # ── Trajectory Category ──────────────────────────────────────────────────────
+
+  - title: Trajectory Category
+    type: task-group
+    description: Choose the patrol attribute used to colour trajectory lines on the map.
+    tasks:
+      - id: ptrl_set_color_column
+        task: set_string_var
+
+      - id: ptrl_color_column_display
+        task: title_case_var
+        partial:
+          var: ${{ workflow.ptrl_set_color_column.return }}
+
+  # ── Patrol and Event Types ────────────────────────────────────────────────────
+
+  - title: Patrols
+    type: task-group
+    description: ' '
+    tasks:
+      - id: ptrl_params
+        task: set_patrols_and_patrol_events_params
+        partial:
+          client: ${{ workflow.er_client_name.return }}
+          time_range: ${{ workflow.time_range.return }}
+          event_types: []
+          include_patrol_details: true
+          raise_on_empty: false
+          truncate_to_time_range: true
+          sub_page_size: 100
+          patrols_overlap_daterange: true
+
+      - id: ptrl_prefetch
+        task: get_patrols_from_combined_params
+        partial:
+          combined_params: ${{ workflow.ptrl_params.return }}
+
+      - id: ptrl_obs
+        task: get_patrol_observations_from_patrols_df_and_combined_params
+        partial:
+          patrols_df: ${{ workflow.ptrl_prefetch.return }}
+          combined_params: ${{ workflow.ptrl_params.return }}
+
+  - name: Convert patrols to timezone
+    id: ptrl_convert_tz
+    task: convert_values_to_timezone
+    partial:
+      df: ${{ workflow.ptrl_obs.return }}
+      timezone: ${{ workflow.get_timezone.return }}
+      columns:
+        - patrol_start_time
+        - patrol_end_time
+        - fixtime
+
+  - name: Transform Observations to Relocations
+    id: ptrl_reloc
+    task: process_relocations
+    partial:
+      observations: ${{ workflow.ptrl_convert_tz.return }}
+      relocs_columns:
+        - patrol_id
+        - patrol_start_time
+        - patrol_end_time
+        - patrol_type__value
+        - patrol_type__display
+        - patrol_serial_number
+        - patrol_status
+        - patrol_subject
+        - groupby_col
+        - fixtime
+        - junk_status
+        - geometry
+      filter_point_coords:
+        - x: 180.000000
+          y: 90.000000
+        - x: 0.000000
+          y: 0.000000
+        - x: 1.000000
+          y: 1.000000
+
+  # ── Trajectory Segment Filter ─────────────────────────────────────────────────
+
+  - title: Trajectory Segment Filter
+    type: task-group
+    description: ' '
+    tasks:
+      - id: ptrl_traj
+        task: relocations_to_trajectory
+        partial:
+          relocations: ${{ workflow.ptrl_reloc.return }}
+
+      - id: ptrl_rename_grouper_cols
+        task: map_columns
+        partial:
+          df: ${{ workflow.ptrl_traj.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            extra__patrol_type__value: patrol_type
+            extra__patrol_serial_number: patrol_serial_number
+            extra__patrol_status: patrol_status
+            extra__patrol_subject: patrol_subject
+          raise_if_not_found: true
+
+      - id: ptrl_colormap
+        task: apply_color_map
+        partial:
+          df: ${{ workflow.ptrl_rename_grouper_cols.return }}
+          colormap:
+            - '#FF9600'
+            - '#F23B0E'
+            - '#A100CB'
+            - '#F04564'
+            - '#03421A'
+            - '#3089FF'
+            - '#E26FFF'
+            - '#8C1700'
+            - '#002960'
+            - '#FFD000'
+            - '#B62879'
+            - '#680078'
+            - '#005A56'
+            - '#0056C7'
+            - '#331878'
+            - '#E76826'
+          input_column_name: ${{ workflow.ptrl_set_color_column.return }}
+          output_column_name: patrol_traj_colormap
+
+  - name: Cast Patrol Trajectory Columns
+    id: ptrl_traj_to_string
+    task: convert_column_values_to_string
+    partial:
+      df: ${{ workflow.ptrl_colormap.return }}
+      columns:
+        - patrol_serial_number
+        - patrol_type
+
+  - name: Set Combined Trajectory & Event Map Title
+    id: ptrl_set_traj_map_title
+    task: set_string_var
+    partial:
+      var: Patrol Trajectories Map
+
+  - name: Set Time Density Map Title
+    id: ptrl_set_ltd_map_title
+    task: set_string_var
+    partial:
+      var: Time Density Map
+
+  # ── Patrol Events and Trajectories Map ────────────────────────────────────────
+
+  - title: Patrol Events and Trajectories Map
+    type: task-group
+    description: Create a combined patrol trajectories and events map.
+    tasks:
+      - id: ptrl_speed_with_unit
+        task: map_values_with_unit
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          input_column_name: speed_kmhr
+          output_column_name: speed_kmhr
+          original_unit: km/h
+          new_unit: km/h
+          decimal_places: 1
+
+      - id: ptrl_traj_rename
+        task: map_columns
+        partial:
+          df: ${{ workflow.ptrl_speed_with_unit.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            patrol_serial_number: Patrol Serial Number
+            patrol_status: Patrol Status
+            patrol_subject: Patrol Subject
+            extra__patrol_type__display: Patrol Type
+            segment_start: Start
+            timespan_seconds: Duration (s)
+            speed_kmhr: Speed (kph)
+          raise_if_not_found: true
+
+      - id: ptrl_traj_status_rename
+        task: map_values
+        partial:
+          df: ${{ workflow.ptrl_traj_rename.return }}
+          column_name: Patrol Status
+          value_map:
+            active: Active
+            overdue: Overdue
+            done: Done
+            cancelled: Cancelled
+          missing_values: remove
+          replacement: null
+
+      - name: Create Patrol Trajectories map layer
+        id: ptrl_traj_map_layer
+        task: create_polyline_layer
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          geodataframe: ${{ workflow.ptrl_traj_status_rename.return }}
+          layer_style:
+            auto_highlight: false
+            opacity: 1.000000
+            pickable: true
+            get_color: null
+            get_width: 3.000000
+            color_column: patrol_traj_colormap
+            width_units: pixels
+            cap_rounded: true
+          legend:
+            label_column: ${{ workflow.ptrl_color_column_display.return }}
+            color_column: patrol_traj_colormap
+          tooltip_columns:
+            - Patrol Serial Number
+            - Patrol Type
+            - Start
+            - Duration (s)
+            - Speed (kph)
+
+      - name: Draw Patrol Trajectories Ecomap
+        id: ptrl_map
+        task: draw_ecomap
+        partial:
+          geo_layers:
+            - ${{ workflow.ptrl_traj_map_layer.return }}
+          tile_layers: ${{ workflow.base_map_defs.return }}
+          north_arrow_style:
+            placement: top-left
+          legend_style:
+            title: ${{ workflow.ptrl_color_column_display.return }}
+            format_title: true
+            placement: bottom-right
+          static: false
+          title: null
+          max_zoom: 20
+          widget_id: ${{ workflow.ptrl_set_traj_map_title.return }}
+
+      - id: ptrl_map_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ptrl_map.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ptrl_map
+
+      - name: Patrol Tracks Map Widget
+        id: ptrl_map_widget
+        task: create_map_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ptrl_set_traj_map_title.return }}
+          data: ${{ workflow.ptrl_map_url.return }}
+
+  # ── Patrol Summary Statistics ──────────────────────────────────────────────────
+
+  - title: Patrol Summary Statistics
+    type: task-group
+    description: Create a single value widget for various patrol statistics.
+    tasks:
+      - id: ptrl_total_patrols
+        task: dataframe_column_nunique
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          column_name: extra__patrol_id
+
+      - name: Total Patrols Widget
+        id: ptrl_total_patrols_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Total Patrols
+          decimal_places: 0
+          data: ${{ workflow.ptrl_total_patrols.return }}
+
+      - id: ptrl_total_time
+        task: dataframe_column_sum
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          column_name: timespan_seconds
+
+      - id: ptrl_total_time_converted
+        task: with_unit
+        partial:
+          value: ${{ workflow.ptrl_total_time.return }}
+          original_unit: s
+          new_unit: h
+
+      - name: Total Time Widget
+        id: ptrl_time_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Total Time (h)
+          decimal_places: 1
+          data: ${{ workflow.ptrl_total_time_converted.return }}
+
+      - id: ptrl_total_dist
+        task: dataframe_column_sum
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          column_name: dist_meters
+
+      - id: ptrl_total_dist_converted
+        task: with_unit
+        partial:
+          value: ${{ workflow.ptrl_total_dist.return }}
+          original_unit: m
+          new_unit: km
+
+      - name: Total Distance Widget
+        id: ptrl_dist_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Total Distance (km)
+          decimal_places: 1
+          data: ${{ workflow.ptrl_total_dist_converted.return }}
+
+      - id: ptrl_avg_speed
+        task: dataframe_column_mean
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          column_name: speed_kmhr
+
+      - id: ptrl_avg_speed_converted
+        task: with_unit
+        partial:
+          value: ${{ workflow.ptrl_avg_speed.return }}
+          original_unit: km/h
+          new_unit: km/h
+
+      - name: Average Speed Widget
+        id: ptrl_avg_speed_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Average Speed (km/h)
+          decimal_places: 1
+          data: ${{ workflow.ptrl_avg_speed_converted.return }}
+
+      - id: ptrl_max_speed
+        task: dataframe_column_max
+        partial:
+          df: ${{ workflow.ptrl_traj_to_string.return }}
+          column_name: speed_kmhr
+
+      - id: ptrl_max_speed_converted
+        task: with_unit
+        partial:
+          value: ${{ workflow.ptrl_max_speed.return }}
+          original_unit: km/h
+          new_unit: km/h
+
+      - name: Max Speed Widget
+        id: ptrl_max_speed_widget
+        task: create_single_value_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: Max Speed (km/h)
+          decimal_places: 1
+          data: ${{ workflow.ptrl_max_speed_converted.return }}
+
+  # ── Time Density Map ───────────────────────────────────────────────────────────
+
+  - title: Time Density Map
+    type: task-group
+    description: These settings show a grid-based heatmap showing where subjects spent the most time.
+    tasks:
+      - id: ptrl_set_ltd_args
+        task: set_ltd_args_with_opacity
+        partial:
+          intersecting_only: false
+
+      - id: ptrl_ltd_meshgrid
+        task: call_meshgrid_from_combined_params
+        partial:
+          aoi: ${{ workflow.ptrl_traj_to_string.return }}
+          combined_params: ${{ workflow.ptrl_set_ltd_args.return }}
+
+      - id: ptrl_ltd_opacity
+        task: get_opacity_from_combined_params
+        partial:
+          combined_params: ${{ workflow.ptrl_set_ltd_args.return }}
+
+      - id: ptrl_ltd
+        task: call_ltd_from_combined_params
+        partial:
+          trajectory_gdf: ${{ workflow.ptrl_traj_to_string.return }}
+          meshgrid: ${{ workflow.ptrl_ltd_meshgrid.return }}
+          combined_params: ${{ workflow.ptrl_set_ltd_args.return }}
+
+      - id: ptrl_ltd_drop_nan
+        task: drop_nan_values_by_column
+        partial:
+          df: ${{ workflow.ptrl_ltd.return }}
+          column_name: percentile
+
+      - id: ptrl_ltd_sorted
+        task: sort_values
+        partial:
+          df: ${{ workflow.ptrl_ltd_drop_nan.return }}
+          column_name: percentile
+          ascending: true
+          na_position: last
+
+      - id: ptrl_ltd_to_str
+        task: convert_column_values_to_string
+        partial:
+          df: ${{ workflow.ptrl_ltd_sorted.return }}
+          columns:
+            - percentile
+
+      - id: ptrl_ltd_colormap
+        task: apply_color_map
+        partial:
+          df: ${{ workflow.ptrl_ltd_to_str.return }}
+          input_column_name: percentile
+          colormap: RdYlGn
+          output_column_name: percentile_colormap
+
+      - id: ptrl_ltd_rename
+        task: map_columns
+        partial:
+          df: ${{ workflow.ptrl_ltd_colormap.return }}
+          drop_columns: []
+          retain_columns: []
+          rename_columns:
+            percentile: Percentile
+          raise_if_not_found: true
+
+      - name: Create Time Density map layer
+        id: ptrl_ltd_layer
+        task: create_polygon_layer
+        skipif:
+          conditions:
+            - any_is_empty_df
+            - any_dependency_skipped
+            - all_geometry_are_none
+        partial:
+          geodataframe: ${{ workflow.ptrl_ltd_rename.return }}
+          layer_style:
+            fill_color_column: percentile_colormap
+            opacity: ${{ workflow.ptrl_ltd_opacity.return }}
+            get_line_width: 0
+          legend:
+            label_column: Percentile
+            label_suffix: ' %'
+            color_column: percentile_colormap
+          tooltip_columns:
+            - Percentile
+
+      - name: Draw Time Density Ecomap
+        id: ptrl_ltd_map
+        task: draw_ecomap
+        partial:
+          geo_layers: ${{ workflow.ptrl_ltd_layer.return }}
+          tile_layers: ${{ workflow.base_map_defs.return }}
+          north_arrow_style:
+            placement: top-left
+          legend_style:
+            title: Time Spent
+            format_title: false
+            placement: bottom-right
+          static: false
+          title: null
+          max_zoom: 20
+          widget_id: ${{ workflow.ptrl_set_ltd_map_title.return }}
+
+      - id: ptrl_ltd_map_url
+        task: persist_text
+        partial:
+          text: ${{ workflow.ptrl_ltd_map.return }}
+          root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+          filename_suffix: ptrl_ltd_map
+
+      - name: Time Density Map Widget
+        id: ptrl_ltd_widget
+        task: create_map_widget_single_view
+        skipif:
+          conditions:
+            - never
+        partial:
+          title: ${{ workflow.ptrl_set_ltd_map_title.return }}
+          data: ${{ workflow.ptrl_ltd_map_url.return }}
+
+  # ── Dashboard ─────────────────────────────────────────────────────────────────
+
+  - name: Operations Dashboard
+    id: dashboard
+    task: gather_dashboard
+    partial:
+      details: ${{ workflow.workflow_details.return }}
+      widgets:
+        # Events
+        - ${{ workflow.ev_count_widget.return }}
+        - ${{ workflow.ev_map_widget.return }}
+        - ${{ workflow.ev_bar_chart_widget.return }}
+        - ${{ workflow.ev_pie_chart_widget.return }}
+        - ${{ workflow.ev_count_heatmap_widget.return }}
+        # Event Details
+        - ${{ workflow.ed_count_widget.return }}
+        - ${{ workflow.ed_stats_table_widget.return }}
+        - ${{ workflow.ed_pie_chart_widget.return }}
+        - ${{ workflow.ed_map_widget.return }}
+        - ${{ workflow.ed_bar_chart_widget.return }}
+        - ${{ workflow.ed_sum_map_widget.return }}
+        - ${{ workflow.ed_events_table_widget.return }}
+        # Patrols
+        - ${{ workflow.ptrl_total_patrols_widget.return }}
+        - ${{ workflow.ptrl_time_widget.return }}
+        - ${{ workflow.ptrl_dist_widget.return }}
+        - ${{ workflow.ptrl_avg_speed_widget.return }}
+        - ${{ workflow.ptrl_max_speed_widget.return }}
+        - ${{ workflow.ptrl_map_widget.return }}
+        - ${{ workflow.ptrl_ltd_widget.return }}
+      time_range: ${{ workflow.time_range.return }}

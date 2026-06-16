@@ -1,0 +1,53 @@
+workflow_details:
+  name: "Operations Dashboard"
+  description: ""
+
+er_client_name:
+  data_source:
+    name: wd
+
+time_range:
+  since: "2026-05-01T00:00:00.000Z"
+  until: "2026-06-16T00:00:00.000Z"
+# time_range:
+#   since: "2025-01-01T00:00:00.000Z"
+#   until: "2026-06-16T00:00:00.000Z"
+
+# Events — empty list fetches all event types (506 events in range)
+# Top types: cameratrap_rep (386), wd_patrol_info (44), entry_alert_rep (36),
+#             wildlife_sighting (24), detection_alert_rep (13)
+ev_get_events:
+  event_types: []
+
+# Event Details — entry_alert_rep has 36 events with numeric speed/length fields.
+# detection_alert_rep (13 events) is an alternative with score/estimatedLength.
+# Switch event_type to "" to skip this section entirely.
+ed_params:
+  event_type: "entry_alert_rep"
+  analysis_field: "entry_speed"
+  analysis_field_label: "Entry Speed"
+  analysis_field_unit: "kts"
+  category_field: "vessel_0_category"
+  category_field_label: "Vessel Category"
+
+# Patrols — 99 patrols in range (wd_patrol: 75, routine_patrol: 19, bicycle: 4, run: 1)
+# All patrols in range have status=done; add active/overdue/cancelled for live patrols
+ptrl_params:
+  patrol_types: []
+  status:
+    - done
+    - active
+    - overdue
+    - cancelled
+
+ptrl_set_color_column:
+  var: patrol_type
+
+ptrl_set_ltd_args:
+  opacity: 0.7
+
+time_interval:
+  var: month
+
+ed_bar_chart:
+  time_interval: month

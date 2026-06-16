@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Compiled workflow output
+ecoscope-workflows-ops-dashboard-workflow/
+.scripts/
