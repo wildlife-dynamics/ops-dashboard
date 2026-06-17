@@ -412,7 +412,8 @@
           "additionalProperties": false,
           "properties": {
             "event_type": {
-              "title": "Events Type",
+              "default": "",
+              "title": "Event Type",
               "type": "string",
               "ecoscope:transform": [
                 {
@@ -425,9 +426,9 @@
               ]
             },
             "analysis_field": {
-              "title": "Analysis Field - Numeric field to analyze",
+              "default": "",
+              "title": "Analysis Field",
               "type": "string",
-              "description": "Select the numeric field the work will use for calculations, i.e. the sum of the field from all events in the workflow.",
               "ecoscope:transform": [
                 {
                   "transformer": "EarthRangerEnumResolver",
@@ -439,20 +440,19 @@
               ]
             },
             "analysis_field_label": {
-              "title": "Label for analysis data",
-              "type": "string",
-              "description": "The provided text will be used to label the analysis data in the outputs."
+              "default": "",
+              "title": "Analysis Field Label",
+              "type": "string"
             },
             "analysis_field_unit": {
-              "title": "Units - What does the number represent?",
-              "type": "string",
-              "description": "Describe the unit or entity for the number,e.g., \"elephants\", \"meters\", \"snares\", \"$USD.\""
+              "default": "",
+              "title": "Analysis Field Unit",
+              "type": "string"
             },
             "category_field": {
               "default": "",
-              "title": "Category Field - Choice field to categorize by",
+              "title": "Category Field",
               "type": "string",
-              "description": "Differentiate events with the choices in a choice field. Each choice will be represented by a different color in the outputs.",
               "ecoscope:transform": [
                 {
                   "transformer": "EarthRangerEnumResolver",
@@ -465,17 +465,11 @@
             },
             "category_field_label": {
               "default": "",
-              "title": "Label for category data",
-              "type": "string",
-              "description": "The provided text will be used to label the category data in the outputs."
+              "title": "Category Field Label",
+              "type": "string"
             }
           },
-          "required": [
-            "event_type",
-            "analysis_field",
-            "analysis_field_label",
-            "analysis_field_unit"
-          ],
+          "required": [],
           "type": "object",
           "title": "Event Details Parameters"
         }

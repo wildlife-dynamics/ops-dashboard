@@ -22,13 +22,13 @@ ev_get_events:
 # Event Details — entry_alert_rep has 36 events with numeric speed/length fields.
 # detection_alert_rep (13 events) is an alternative with score/estimatedLength.
 # Switch event_type to "" to skip this section entirely.
-ed_params:
-  event_type: "entry_alert_rep"
-  analysis_field: "entry_speed"
-  analysis_field_label: "Entry Speed"
-  analysis_field_unit: "kts"
-  category_field: "vessel_0_category"
-  category_field_label: "Vessel Category"
+# ed_params:
+#   event_type: "entry_alert_rep"
+#   analysis_field: "entry_speed"
+#   analysis_field_label: "Entry Speed"
+#   analysis_field_unit: "kts"
+#   category_field: "vessel_0_category"
+#   category_field_label: "Vessel Category"
 
 # Patrols — 99 patrols in range (wd_patrol: 75, routine_patrol: 19, bicycle: 4, run: 1)
 # All patrols in range have status=done; add active/overdue/cancelled for live patrols

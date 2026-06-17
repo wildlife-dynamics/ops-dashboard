@@ -50,6 +50,10 @@ channel = "https://conda.anaconda.org/conda-forge/"
 version = ">=0.1.3,<1.0.0"
 channel = "https://repo.prefix.dev/ecoscope-workflows/"
 
+[pypi-dependencies.wd-tasks]
+path = "/Users/zak/Documents/w-dynamics/ops-dashboard/wd-tasks"
+editable = true
+
 [feature.runner.dependencies.wt-runner]
 version = ">=0.3.0,<1.0.0"
 channel = "https://repo.prefix.dev/ecoscope-workflows/"

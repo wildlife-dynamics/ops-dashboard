@@ -57,9 +57,6 @@ from ecoscope.platform.tasks.io import (
     get_event_type_from_event_details as get_event_type_from_event_details,
 )
 from ecoscope.platform.tasks.io import persist_text as persist_text
-from ecoscope.platform.tasks.io import (
-    set_event_details_params as set_event_details_params,
-)
 from ecoscope.platform.tasks.results import (
     create_map_widget_single_view as create_map_widget_single_view,
 )
@@ -99,6 +96,9 @@ from ecoscope.platform.tasks.transformation import (
 )
 from ecoscope.platform.tasks.transformation import map_columns as map_columns
 from ecoscope.platform.tasks.transformation import sort_values as sort_values
+from wd_tasks import (
+    set_optional_event_details_params as set_optional_event_details_params,
+)
 
 get_events_from_combined_params = create_func_magicmock(  # 🧪
     anchor="ecoscope.platform.tasks.io",  # 🧪
@@ -1060,7 +1060,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
     )
 
     ed_params = (
-        task(set_event_details_params)
+        task(set_optional_event_details_params)
         .validate()
         .set_task_instance_id("ed_params")
         .handle_errors()
@@ -1105,8 +1105,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
         .with_tracing()
         .skipif(
             conditions=[
-                any_is_empty_df,
-                any_dependency_skipped,
+                any_dependency_is_none,
             ],
             unpack_depth=1,
         )
@@ -1122,8 +1121,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
         .with_tracing()
         .skipif(
             conditions=[
-                any_is_empty_df,
-                any_dependency_skipped,
+                any_dependency_is_none,
             ],
             unpack_depth=1,
         )
@@ -1141,8 +1139,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
         .with_tracing()
         .skipif(
             conditions=[
-                any_is_empty_df,
-                any_dependency_skipped,
+                any_dependency_is_none,
             ],
             unpack_depth=1,
         )
@@ -1194,8 +1191,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
         .with_tracing()
         .skipif(
             conditions=[
-                any_is_empty_df,
-                any_dependency_skipped,
+                any_dependency_is_none,
             ],
             unpack_depth=1,
         )
@@ -1211,8 +1207,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
         .with_tracing()
         .skipif(
             conditions=[
-                any_is_empty_df,
-                any_dependency_skipped,
+                any_dependency_is_none,
             ],
             unpack_depth=1,
         )
