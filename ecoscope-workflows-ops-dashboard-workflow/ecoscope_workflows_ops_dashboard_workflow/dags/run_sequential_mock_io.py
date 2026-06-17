@@ -96,7 +96,7 @@ from ecoscope.platform.tasks.transformation import (
 )
 from ecoscope.platform.tasks.transformation import map_columns as map_columns
 from ecoscope.platform.tasks.transformation import sort_values as sort_values
-from wd_tasks import (
+from ecoscope_workflows_ext_wd.tasks import (
     set_optional_event_details_params as set_optional_event_details_params,
 )
 

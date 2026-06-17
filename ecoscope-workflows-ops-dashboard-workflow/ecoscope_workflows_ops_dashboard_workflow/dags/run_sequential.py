@@ -159,7 +159,7 @@ from ecoscope.platform.tasks.transformation import (
 )
 from ecoscope.platform.tasks.transformation import transpose as transpose
 from ecoscope.platform.tasks.transformation import with_unit as with_unit
-from wd_tasks import (
+from ecoscope_workflows_ext_wd.tasks import (
     set_optional_event_details_params as set_optional_event_details_params,
 )
 from wt_contracts import validate as _validate
